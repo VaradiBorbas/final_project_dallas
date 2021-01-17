@@ -1,0 +1,292 @@
+---
+title: "Dallas Animal Shelters"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+<style type="text/css">
+.main-container {
+  max-width: 1700px;
+  margin-left: auto;
+  margin-right: auto;
+}
+</style>
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Analyzing data provided by Animal Shelters in Dallas
+
+## Preparations before completing the exercise
+
+```{r}
+# Supress warnings
+options(warn = -1)
+
+# Load the required libraries
+library(skimr)
+library(car)
+library(mlogit)
+library(gmodels)
+library(readxl)
+library(tidyverse)
+
+# Read the data
+#week18_dallas_animals <- read_excel("C:/Users/HP/Downloads/week18_dallas_animals.xlsx")
+url <- "https://github.com/rfordatascience/tidytuesday/blob/master/data/2018/2018-07-31/week18_dallas_animals.xlsx?raw=true"
+destfile <- "week18_dallas_animals.xlsx"
+curl::curl_download(url, destfile)
+week18_dallas_animals <- read_excel(destfile)
+
+# Filter data to show only cats and dogs
+cats_dogs <- week18_dallas_animals %>% filter(animal_type == "CAT" | animal_type == "DOG")
+
+# Select the variables that can be interesting for further analyses
+cats_dogs <- select(cats_dogs, animal_type, intake_date, intake_condition, outcome_type, outcome_date, chip_status) 
+
+# Calculating duration spent in the shelter
+cats_dogs <- cats_dogs %>% filter(outcome_date != "NA") %>%
+  mutate(end_date = as.Date("1899-12-30") + as.numeric(outcome_date)) %>%
+  mutate(duration = difftime(end_date, intake_date, units = c("days"))) %>%
+  select(-intake_date, -outcome_date)
+
+# Filtering out unnecessary categories
+cats_dogs <- cats_dogs %>% filter(outcome_type != "MISSING") %>% filter(outcome_type != "LOST REPORT")  %>% filter(outcome_type != "FOUND REPORT") %>% filter(outcome_type != "OTHER")
+```
+
+## Exploratory data analysis with useful visualisations
+
+```{r}
+
+# Looking at the frequencies of different outcomes in the shelter by animal type (dogs vs. cats)
+crosstab <- CrossTable(cats_dogs$animal_type, cats_dogs$outcome_type, digits=3, max.width = 5, prop.r=TRUE, prop.c=TRUE)
+```
+
+```{r}
+# Visualizations 1
+# Outcomes per animal type (dogs vs. cats)
+outcomes_per_animal_type <- as.data.frame(crosstab[["prop.row"]])
+outcomes_per_animal_type <- outcomes_per_animal_type %>% 
+  rename(
+    animal_type = x,
+    outcome_frequency = Freq,
+    outcome_type = y
+    )
+
+outcome_per_animal_plot <- ggplot(outcomes_per_animal_type, aes(fill = animal_type, y = outcome_frequency, x = outcome_type )) +
+  geom_bar(position="dodge", stat="identity") +
+  theme_light() +
+  theme(legend.position="bottom") +
+  ggtitle("Frequency of different outcomes in the shelter by animal type") +
+  xlab("Outcome type") +
+  ylab("Frequency")
+
+outcome_per_animal_plot
+```
+
+**From the graph it can be seen that most animals in the shelter are either adopted, euthanized, transferred or returned to the owner. More dogs are adopted or returned to the owner than cats, while more cats are euthanized or transferred than dogs.**
+
+```{r}
+# Looking at the frequencies of different outcomes in the shelter by chip status
+crosstab <- CrossTable(cats_dogs$chip_status, cats_dogs$outcome_type, digits=3, max.width = 5, prop.r=TRUE, prop.c=TRUE)
+```
+
+```{r}
+
+# Visualizations 2
+# Outcomes per animal type (dogs vs. cats)
+outcomes_per_chip_status <- as.data.frame(crosstab[["prop.row"]])
+outcomes_per_chip_status <- outcomes_per_chip_status %>% 
+  rename(
+    chip_status = x,
+    outcome_frequency = Freq,
+    outcome_type = y
+    )
+
+outcome_per_chip_plot <- ggplot(outcomes_per_chip_status, aes(fill = chip_status, y = outcome_frequency, x = outcome_type )) +
+  geom_bar(position="dodge", stat="identity") +
+  theme_light() +
+  theme(legend.position="bottom") +
+  ggtitle("Frequency of different outcomes in the shelter by chip status") +
+  xlab("Outcome type") +
+  ylab("Frequency")
+
+outcome_per_chip_plot
+```
+
+**From the graph it can be seen that more adopted animals are chipped than not chipped, more euthanized animals are not chipped than chipped, more chipped than not chipped animals are returned to the owner, and non-chipped or unable to chipped animals get transferred by more chance than chipped ones.**
+
+```{r}
+# Looking at the frequencies of different outcomes in the shelter by intake condition
+crosstab <- CrossTable(cats_dogs$intake_condition, cats_dogs$outcome_type, digits=3, max.width = 5, prop.r=TRUE, prop.c=TRUE)
+```
+
+```{r}
+# Visualizations 3
+# Outcomes per animal type (dogs vs. cats)
+outcomes_per_intake_condition <- as.data.frame(crosstab[["prop.row"]])
+outcomes_per_intake_condition <- outcomes_per_intake_condition %>% 
+  rename(
+    intake_condition = x,
+    outcome_frequency = Freq,
+    outcome_type = y
+    )
+
+outcome_per_intake_condition_plot <- ggplot(outcomes_per_intake_condition, aes(fill = intake_condition, y = outcome_frequency, x = outcome_type )) +
+  geom_bar(position="dodge", stat="identity") +
+  theme_light() +
+  theme(legend.position="bottom") +
+  ggtitle("Frequency of different outcomes in the shelter by intake conditions") +
+  xlab("Outcome type") +
+  ylab("Frequency")
+
+outcome_per_intake_condition_plot
+```
+
+**From the graph it can be seen that those animals that are healthy or have treatable and non contagious illnesses are adopted by more chance than those animals that have an illness that is untreatable or contagious. Most euthanized animals have untreatable or contagious illness. Transferred animals are often sick but their condition is treatable.**
+
+```{r}
+# Visualizing duration spent in the shelter by outcome type
+outcome_durations <- ggplot(cats_dogs, aes(x=outcome_type, y=duration)) + 
+  geom_boxplot() +
+  theme_light() +
+  ggtitle("Different outcomes in the shelter by duration of spent in the shelter") +
+  xlab("Outcome type") +
+  ylab("Duration")
+
+outcome_durations
+```
+
+**From the graph it can be seen that adopted, transferred, and fostered animals spend more time in the shelter than those who die, who are euthanized or returned to the owner.**
+
+```{r}
+# Filtering out certain categories
+cats_dogs <- cats_dogs %>% filter(chip_status != "UNABLE TO SCAN") %>% filter(outcome_type != "DEAD ON ARRIVAL")
+```
+
+**The category of "dead on arrival" needed to be filtered out as based on the exploratory data analyses I decided I would predict adoption status, and those animals who are dead at arrival cannot be adopted, so this category is not really useful for further analysis. Also, the unable to chip category was filtered out from the chip status variable.**
+
+```{r}
+# Creating a variable which shows whether an animal was adopted or not (all other categories from outcome_type coded as not adopted)
+cats_dogs <- cats_dogs %>% mutate(adoption_status = ifelse(outcome_type == "ADOPTION",1,0))
+
+# Creating a variable which shows whether an animal is healthy or not at the intake (all other categories from intake_condition coded as not healthy)
+cats_dogs <- cats_dogs %>% mutate(health_status = ifelse(intake_condition == "HEALTHY",1,0))
+
+# Renaming chip statuses
+cats_dogs <- cats_dogs %>% mutate(chip_status = ifelse(chip_status == "SCAN CHIP",1,0))
+```
+
+**I decided to create two models. The first model only contains health status as a predictor of adoption status. I hypothesize that healthy animals have a better chance to become adopted than non-healthy ones. In the second model I also added variables that are not that straightforwardly related to adoption than health status but the exploratory data analyses suggested they might be useful to include in our model. These variables are chip status and animal type. I hypothesize that chipped animals and dogs become adopted by more chance. And I also hypothesize that the second model (that contains chip status and animal type besides health status as well) will better predict adoption than the model that only contains health status.**
+
+## Building the null model
+
+```{r}
+# Create the logistic regression model that only contains injury mechanism as predictor and type as outcome
+model0 <- glm(adoption_status ~ health_status, data = cats_dogs, family = binomial())
+summary(model0)
+
+# Calculating model chi-square statistic, the associated degrees of freedom and p-value
+modelChi0 <- model0$null.deviance - model0$deviance
+modelChi0
+chidf0 <- model0$df.null - model0$df.residual
+chidf0
+chisq.prob0 <- 1 - pchisq(modelChi0, chidf0)
+chisq.prob0
+
+# Calculating Hosmer and Lemeshov R statistic
+R2.hl0<-modelChi0/model0$null.deviance
+R2.hl0
+```
+**The null deviance (-2LL(baseline) = 38968) is larger than the residual deviance (-2LL(new) = 38029) which means that our model can better predict adoption status when health status is added to it than without it. Including health status significantly improved the model fit χ2(1) = 938.37, p<0.00000001. When looking at the individual predictors, health status significantly contribute to predicting the outcome (adoption) b=1.51; Z=29.3; p<0.0001. The model explains 2.4% of the variation in the outcome (R2=0.024). AIC=38033**
+
+## Building the model
+
+```{r}
+# Create the logistic regression model that also contains age_group as predictor
+model1 <- glm(adoption_status ~ health_status + animal_type + chip_status, data = cats_dogs, family = binomial())
+summary(model1)
+
+# Calculating model chi-square statistic, the associated degrees of freedom and p-value
+modelChi1 <- model1$null.deviance - model1$deviance
+modelChi1
+chidf1 <- model1$df.null - model1$df.residual
+chidf1
+chisq.prob1 <- 1 - pchisq(modelChi1, chidf1)
+chisq.prob1
+
+# Calculating Hosmer and Lemeshov R statistic
+R2.hl1 <- modelChi1/model1$null.deviance
+R2.hl1
+```
+**The null deviance (-2LL(baseline) = 38968) is larger than the residual deviance (-2LL(new) = 37941) which means that our model can better predict adoption status when health status, animal type and chip status is added to it than without it. Including these variables significantly improved the model fit χ2(3) = 1026.56, p<0.00000001. When looking at the individual predictors, we can see that all predictors significantly contribute to predicting the outcome (adoption status) b1(health_status)=1.49; z=28.78; p<0.0001, b2(animal_typeDOG)=0.167; z=5.425; p<0.0001, b3(chip_status)=0.22; z=6.858, p<0.0001. The model explains 2.6% of the variation in the outcome (R2=0.026). AIC=37949. **
+
+# Check the assumptions
+
+```{r}
+# Calculating the statistics that will help to detect outliers and influential cases
+cats_dogs$standardized.residuals<-rstandard(model1)
+cats_dogs$studentized.residuals<-rstudent(model1)
+cats_dogs$dfbeta<-dfbeta(model1)
+cats_dogs$dffit<-dffits(model1)
+cats_dogs$leverage<-hatvalues(model1)
+
+# Checking outliers
+# Creating a new variable which shows whether each standardized residual is larger or smaller than 2 (called large residuals), then, summing the number of such large residuals
+cats_dogs$large.residual <- cats_dogs$standardized.residuals > 2 | cats_dogs$standardized.residuals < -2
+sum(cats_dogs$large.residual) 
+
+# Testing for multicollinearity
+vif(model1)
+1/vif(model1)
+
+# The linearity of the logit assumption cannot be tested in our case as we have no continuous predictor variables
+```
+
+**As no standardized residuals larger than 2 or -2, it suggests that no case is an outlier, so we do not need further analyses with the large residuals like looking at the average leverage or Cook's Distance (as we have no problematic case). There is no problem with multicollinearity based on the VIF and tolerance values (VIF values are smaller than 3 and tolerance values are larger than 0.2). The linearity of the logit assumption cannot be tested in our case as we have no continuous predictor variables.**
+
+# Compare the models
+
+```{r}
+# Comparing the models
+modelChi <- model0$deviance - model1$deviance
+chidf <- model0$df.residual - model1$df.residual
+chisq.prob <- 1 - pchisq(modelChi, chidf)
+modelChi; chidf; chisq.prob
+
+anova(model0, model1)
+```
+**The difference between the two model is 88.19 with 2 degrees of freedom and a p<0.001. As p is smaller than 0.5 we can conclude that the second model is better than in the first. If we recall the AIC values from the previous analyses it was 38033 for the first model and 37949 for the second. This also confirms that the second model is better as the AIC was smaller in the second than the first model.**
+
+# Calculate odds ratio and confidence interval
+
+```{r}
+# Calculating odds ratios
+exp(model1$coefficients)
+
+# Calculating the confidence intervals
+exp(confint(model1))
+```
+**The Odds Ratios of the predictor variables shows that as the predictors increase (an animal is healthy, a dog, and chipped) the odds of becoming adopted increases. The odds of a healthy animal to become adopted is 4.45 times higher than for an unhealthy one. The odds of a dog to become adopted is 1.18 times higher than for a cat. The odds of a chipped animal to be adopted is 1.25 times higher than for an unchipped animal. The confidence intervals shows that we can be fairly confident that these results can also be true in different samples (they does not go below 1 at either side).**
+
+# Report the results
+
+### Table of results
+
+#### Predictors in model1
+Predictors | b | SE |95% CI lower bound | Odds Ratio | 95% CI upper bound |
+-----|-----|-----|-----|-----|-----
+Intercept | -0.93 | 0,027 | 0,37 | 0,39 | 0,41
+health_status | 1,49 | 0,051 | 4,02 | 4,45 | 4,93
+animal_typeDOG | 0,17 | 0,03 | 1,11 | 1,18 | 1,25
+chip_status | 0,22 | 0,03 | 1,17 | 1,25 | 1,33
+
+#### Model Test Statistics
+Models| HL R-squared | chi-squared | df | AIC | p
+-----|-----|-----|-----|----- |-----
+Model0 | 0,024 | 938,36 | 1 | 38033 | <0,001
+Model1 |  0,026 | 1026,56 | 3 | 37949 | <0,001
+
+**Overall, the second model better predicted adoption than the first model. This means that there was a value in adding chip status and animal type to the model besides health status. All three predictors significantly predict adoption but still, health status is the most influential predictor. However, though our model was significant, it only explains 2.6% from the variation in adoption, so there is still room to improve the model.**
